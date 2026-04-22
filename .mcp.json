@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "browai": {
+      "command": "node",
+      "args": ["C:/Users/burge/Music/browai/mcp-server/index.mjs"],
+      "description": "BrowAI browser control — full Electron browser automation for security testing"
+    }
+  }
+}

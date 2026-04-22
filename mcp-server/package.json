@@ -1,0 +1,11 @@
+{
+  "name": "browai-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for BrowAI browser — full browser control for security testing",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {}
+}

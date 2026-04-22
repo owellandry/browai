@@ -1,0 +1,24 @@
+.app {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f0f0f0;
+}
+
+.content-area {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.browser-placeholder {
+  flex: 1;
+  display: none; /* Ocultar el placeholder ya que el BrowserView se renderiza aquí */
+  align-items: center;
+  justify-content: center;
+  background-color: #fff;
+  color: #999;
+  font-size: 14px;
+}
