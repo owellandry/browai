@@ -132,21 +132,65 @@ function createBrowserView(viewId, url) {
   const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
   view.webContents.setUserAgent(userAgent);
 
-  // Agregar headers adicionales para parecer más humano
+  // Agregar headers contextuales para parecer un navegador real
   view.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+    const url = details.url || '';
+    const resType = details.resourceType || '';
+
     details.requestHeaders['Accept-Language'] = 'es-ES,es;q=0.9,en;q=0.8';
-    details.requestHeaders['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
     details.requestHeaders['Accept-Encoding'] = 'gzip, deflate, br';
     details.requestHeaders['DNT'] = '1';
-    details.requestHeaders['Upgrade-Insecure-Requests'] = '1';
-    details.requestHeaders['Sec-Fetch-Site'] = 'none';
-    details.requestHeaders['Sec-Fetch-Mode'] = 'navigate';
-    details.requestHeaders['Sec-Fetch-User'] = '?1';
-    details.requestHeaders['Sec-Fetch-Dest'] = 'document';
     details.requestHeaders['sec-ch-ua'] = `"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"`;
     details.requestHeaders['sec-ch-ua-mobile'] = '?0';
     details.requestHeaders['sec-ch-ua-platform'] = '"Windows"';
-    
+
+    // Sec-Fetch-* headers deben coincidir con el tipo de request
+    const isNavigation = resType === 'mainFrame' || resType === 'subFrame';
+    const isXHR = resType === 'xhr' || resType === 'fetch';
+
+    if (isNavigation) {
+      details.requestHeaders['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
+      details.requestHeaders['Upgrade-Insecure-Requests'] = '1';
+      details.requestHeaders['Sec-Fetch-Mode'] = 'navigate';
+      details.requestHeaders['Sec-Fetch-Dest'] = resType === 'mainFrame' ? 'document' : 'iframe';
+      details.requestHeaders['Sec-Fetch-User'] = '?1';
+      // Sec-Fetch-Site depende del origen
+      try {
+        const pageOrigin = view.webContents.getURL();
+        if (!pageOrigin || pageOrigin === '' || pageOrigin === 'about:blank') {
+          details.requestHeaders['Sec-Fetch-Site'] = 'none';
+        } else {
+          const reqHost = new URL(url).hostname;
+          const pageHost = new URL(pageOrigin).hostname;
+          if (reqHost === pageHost) {
+            details.requestHeaders['Sec-Fetch-Site'] = 'same-origin';
+          } else if (reqHost.endsWith('.' + pageHost) || pageHost.endsWith('.' + reqHost)) {
+            details.requestHeaders['Sec-Fetch-Site'] = 'same-site';
+          } else {
+            details.requestHeaders['Sec-Fetch-Site'] = 'cross-site';
+          }
+        }
+      } catch (_) {
+        details.requestHeaders['Sec-Fetch-Site'] = 'none';
+      }
+    } else if (isXHR) {
+      details.requestHeaders['Sec-Fetch-Mode'] = 'cors';
+      details.requestHeaders['Sec-Fetch-Dest'] = 'empty';
+      details.requestHeaders['Sec-Fetch-Site'] = 'same-origin';
+    } else if (resType === 'script') {
+      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
+      details.requestHeaders['Sec-Fetch-Dest'] = 'script';
+    } else if (resType === 'stylesheet') {
+      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
+      details.requestHeaders['Sec-Fetch-Dest'] = 'style';
+    } else if (resType === 'image') {
+      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
+      details.requestHeaders['Sec-Fetch-Dest'] = 'image';
+    } else {
+      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
+      details.requestHeaders['Sec-Fetch-Dest'] = 'empty';
+    }
+
     callback({ requestHeaders: details.requestHeaders });
   });
 
@@ -166,70 +210,6 @@ function createBrowserView(viewId, url) {
   });
 
   attachDebugger(view, viewId);
-
-  // Inyectar script para ocultar propiedades de automatización
-  view.webContents.on('did-finish-load', () => {
-    view.webContents.executeJavaScript(`
-      // Ocultar propiedades de automatización
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
-      });
-      
-      // Ocultar que es Electron
-      delete navigator.__proto__.webdriver;
-      
-      // Agregar propiedades de Chrome real
-      window.chrome = {
-        runtime: {},
-        loadTimes: function() {},
-        csi: function() {},
-        app: {}
-      };
-      
-      // Modificar plugins
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [
-          {
-            0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format"},
-            description: "Portable Document Format",
-            filename: "internal-pdf-viewer",
-            length: 1,
-            name: "Chrome PDF Plugin"
-          },
-          {
-            0: {type: "application/pdf", suffixes: "pdf", description: "Portable Document Format"},
-            description: "Portable Document Format", 
-            filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
-            length: 1,
-            name: "Chrome PDF Viewer"
-          },
-          {
-            0: {type: "application/x-nacl", suffixes: "", description: "Native Client Executable"},
-            1: {type: "application/x-pnacl", suffixes: "", description: "Portable Native Client Executable"},
-            description: "Native Client",
-            filename: "internal-nacl-plugin",
-            length: 2,
-            name: "Native Client"
-          }
-        ],
-      });
-      
-      // Modificar languages
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['es-ES', 'es', 'en-US', 'en'],
-      });
-      
-      // Agregar permisos
-      const originalQuery = window.navigator.permissions.query;
-      window.navigator.permissions.query = (parameters) => (
-        parameters.name === 'notifications' ?
-          Promise.resolve({ state: Notification.permission }) :
-          originalQuery(parameters)
-      );
-    `).catch(err => {
-      console.error('Error inyectando script anti-detección:', err);
-    });
-  });
 
   if (url) view.webContents.loadURL(url);
 
@@ -263,8 +243,112 @@ function attachDebugger(view, viewId) {
     dbg.attach('1.3');
     dbg.sendCommand('Network.enable');
 
-    dbg.sendCommand('Network.enable');
-    dbg.sendCommand('Network.setRequestInterception', { patterns: [] }).catch(() => {});
+    // Inyectar script anti-detección ANTES de que carguen los scripts de la página
+    dbg.sendCommand('Page.enable').catch(() => {});
+    dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+      source: `
+        // Ocultar webdriver
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true,
+        });
+
+        // Eliminar propiedades de Electron/CDP
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+        // Agregar objeto chrome realista
+        if (!window.chrome) {
+          window.chrome = {};
+        }
+        window.chrome.runtime = {
+          connect: function() { return { onMessage: { addListener: function(){} }, postMessage: function(){} }; },
+          sendMessage: function() {},
+          onMessage: { addListener: function(){}, removeListener: function(){} },
+          id: undefined,
+        };
+        window.chrome.loadTimes = function() {
+          return {
+            commitLoadTime: Date.now() / 1000,
+            connectionInfo: 'h2',
+            finishDocumentLoadTime: Date.now() / 1000,
+            finishLoadTime: Date.now() / 1000,
+            firstPaintAfterLoadTime: 0,
+            firstPaintTime: Date.now() / 1000,
+            navigationType: 'Other',
+            npnNegotiatedProtocol: 'h2',
+            requestTime: Date.now() / 1000,
+            startLoadTime: Date.now() / 1000,
+            wasAlternateProtocolAvailable: false,
+            wasFetchedViaSpdy: true,
+            wasNpnNegotiated: true,
+          };
+        };
+        window.chrome.csi = function() {
+          return { onloadT: Date.now(), pageT: Date.now() / 1000, startE: Date.now(), tran: 15 };
+        };
+        window.chrome.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } };
+
+        // Plugins realistas (como PluginArray)
+        const makePluginArray = (arr) => {
+          const pa = Object.create(PluginArray.prototype);
+          arr.forEach((p, i) => { pa[i] = p; });
+          Object.defineProperty(pa, 'length', { get: () => arr.length });
+          pa.item = (i) => arr[i];
+          pa.namedItem = (n) => arr.find(p => p.name === n);
+          pa.refresh = () => {};
+          return pa;
+        };
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => makePluginArray([
+            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1, 0: { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' } },
+            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: 'Portable Document Format', length: 1, 0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' } },
+            { name: 'Native Client', filename: 'internal-nacl-plugin', description: 'Native Client', length: 2, 0: { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' }, 1: { type: 'application/x-pnacl', suffixes: '', description: 'Portable Native Client Executable' } },
+          ]),
+          configurable: true,
+        });
+
+        // Languages
+        Object.defineProperty(navigator, 'languages', {
+          get: () => Object.freeze(['es-ES', 'es', 'en-US', 'en']),
+          configurable: true,
+        });
+
+        // Permisos
+        const origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+        window.navigator.permissions.query = (params) => (
+          params.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : origQuery(params)
+        );
+
+        // Ocultar que se ejecuta en Electron
+        Object.defineProperty(navigator, 'userAgent', {
+          get: () => navigator.userAgent.replace(/Electron\\/[\\d.]+ /, ''),
+          configurable: true,
+        });
+
+        // hardwareConcurrency y deviceMemory realistas
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+
+        // connection API
+        if (!navigator.connection) {
+          Object.defineProperty(navigator, 'connection', {
+            get: () => ({
+              effectiveType: '4g',
+              rtt: 50,
+              downlink: 10,
+              saveData: false,
+              addEventListener: function(){},
+              removeEventListener: function(){},
+            }),
+            configurable: true,
+          });
+        }
+      `
+    }).catch(() => {});
 
     dbg.on('message', async (event, method, params) => {
       if (method === 'Network.requestWillBeSent') {
