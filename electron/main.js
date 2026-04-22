@@ -44,14 +44,15 @@ function createWindow() {
   });
 
   const ses = session.fromPartition('persist:browsersession');
-  // El cache se gestiona automáticamente con persist:browsersession
-  // No existe ses.setCache() en la API de Electron
-  ses.cookies.on('changed', () => {});
-
+  
+  // Configurar permisos
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowed = ['notifications', 'geolocation', 'media', 'mediaKeySystem'];
     callback(allowed.includes(permission));
   });
+  
+  // Configurar User Agent para la sesión principal también
+  ses.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.82 Safari/537.36');
 
   // Inject extra headers on every request in this session (for MCP header injection)
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -122,23 +123,39 @@ function createBrowserView(viewId, url) {
       enableRemoteModule: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
+      // Deshabilitar características que pueden causar detección
+      backgroundThrottling: false,
+      offscreen: false,
     },
   });
 
   browserViews[viewId] = view;
 
-  // Configurar un User Agent realista (Chrome en Windows)
-  const chromeVersion = '131.0.0.0';
+  // Configurar un User Agent realista (Chrome actualizado para 2026)
+  const chromeVersion = '134.0.6998.82';
   const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
   view.webContents.setUserAgent(userAgent);
 
-  // Solo agregar headers de identidad; Chromium ya genera Sec-Fetch-* correctos
+  // Agregar headers realistas para evitar detección
   view.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+    // Headers básicos de idioma y privacidad
     details.requestHeaders['Accept-Language'] = 'es-ES,es;q=0.9,en;q=0.8';
     details.requestHeaders['DNT'] = '1';
-    details.requestHeaders['sec-ch-ua'] = `"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"`;
+    
+    // Headers de Chrome actualizados
+    details.requestHeaders['sec-ch-ua'] = `"Chromium";v="134", "Google Chrome";v="134", "Not:A-Brand";v="99"`;
     details.requestHeaders['sec-ch-ua-mobile'] = '?0';
     details.requestHeaders['sec-ch-ua-platform'] = '"Windows"';
+    
+    // Headers adicionales importantes
+    if (details.resourceType === 'mainFrame') {
+      details.requestHeaders['Upgrade-Insecure-Requests'] = '1';
+      details.requestHeaders['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7';
+    } else if (details.resourceType === 'script') {
+      details.requestHeaders['Accept'] = '*/*';
+    } else if (details.resourceType === 'image') {
+      details.requestHeaders['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
+    }
 
     // Inyectar headers extra de MCP si existen
     if (Object.keys(extraHeaders).length > 0) {
@@ -153,10 +170,13 @@ function createBrowserView(viewId, url) {
   });
 
   view.webContents.on('did-stop-loading', () => {
-    mainWindow.webContents.send('tab-loading', viewId, false);
-    const title = view.webContents.getTitle();
-    const url = view.webContents.getURL();
-    mainWindow.webContents.send('tab-updated', viewId, { title, url });
+    // Agregar un pequeño delay para simular comportamiento humano
+    setTimeout(() => {
+      mainWindow.webContents.send('tab-loading', viewId, false);
+      const title = view.webContents.getTitle();
+      const url = view.webContents.getURL();
+      mainWindow.webContents.send('tab-updated', viewId, { title, url });
+    }, 100 + Math.random() * 200);
   });
 
   view.webContents.on('page-title-updated', (event, title) => {
@@ -199,108 +219,435 @@ function attachDebugger(view, viewId) {
 
     // Inyectar script anti-detección ANTES de que carguen los scripts de la página
     dbg.sendCommand('Page.enable').catch(() => {});
+    
+    // Script 1: Configuración inicial crítica (debe ejecutarse PRIMERO)
     dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
       source: `
-        // Ocultar webdriver
+        // === ANTI-DETECCIÓN CLOUDFLARE ===
+        // === ANTI-DETECCIÓN CLOUDFLARE ===
+        
+        // CRÍTICO: Cloudflare verifica estas propiedades primero
+        
+        // 1. Webdriver - DEBE ser false, no undefined
         Object.defineProperty(navigator, 'webdriver', {
-          get: () => undefined,
-          configurable: true,
+          get: () => false,
+          configurable: false,
+          enumerable: true
         });
 
-        // Eliminar propiedades de Electron/CDP
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        // 2. Eliminar TODAS las propiedades CDP/Automation
+        const propsToDelete = [
+          '__webdriver_evaluate',
+          '__selenium_evaluate',
+          '__webdriver_script_function',
+          '__webdriver_script_func',
+          '__webdriver_script_fn',
+          '__fxdriver_evaluate',
+          '__driver_unwrapped',
+          '__webdriver_unwrapped',
+          '__driver_evaluate',
+          '__selenium_unwrapped',
+          '__fxdriver_unwrapped',
+          '_Selenium_IDE_Recorder',
+          '_selenium',
+          'calledSelenium',
+          '$cdc_asdjflasutopfhvcZLmcfl_',
+          '$chrome_asyncScriptInfo',
+          '__$webdriverAsyncExecutor',
+          'webdriver',
+          '__webdriverFunc',
+          'domAutomation',
+          'domAutomationController',
+        ];
+        
+        propsToDelete.forEach(prop => {
+          try {
+            delete window[prop];
+            delete document[prop];
+            delete navigator[prop];
+          } catch(e) {}
+        });
+        
+        // Eliminar propiedades CDC dinámicamente
+        Object.getOwnPropertyNames(window).forEach(prop => {
+          if (prop.includes('cdc_') || prop.includes('__selenium') || prop.includes('__webdriver')) {
+            try { delete window[prop]; } catch(e) {}
+          }
+        });
 
-        // Agregar objeto chrome realista
+        // 3. Chrome object COMPLETO (Cloudflare lo verifica extensivamente)
         if (!window.chrome) {
           window.chrome = {};
         }
+        
+        // Runtime API
         window.chrome.runtime = {
-          connect: function() { return { onMessage: { addListener: function(){} }, postMessage: function(){} }; },
-          sendMessage: function() {},
-          onMessage: { addListener: function(){}, removeListener: function(){} },
+          connect: function() { 
+            return { 
+              onMessage: { 
+                addListener: function(){}, 
+                removeListener: function(){},
+                hasListener: function(){ return false; }
+              }, 
+              postMessage: function(){},
+              disconnect: function(){},
+              onDisconnect: { addListener: function(){}, removeListener: function(){} }
+            }; 
+          },
+          sendMessage: function(extensionId, message, options, callback) {
+            if (typeof callback === 'function') {
+              setTimeout(() => callback(), 0);
+            }
+          },
+          onMessage: { 
+            addListener: function(){}, 
+            removeListener: function(){},
+            hasListener: function(){ return false; }
+          },
           id: undefined,
+          getManifest: function(){ return undefined; },
+          getURL: function(path){ return undefined; }
         };
+        
+        // LoadTimes (deprecado pero Cloudflare lo verifica)
         window.chrome.loadTimes = function() {
+          const now = Date.now() / 1000;
           return {
-            commitLoadTime: Date.now() / 1000,
+            commitLoadTime: now - Math.random() * 0.5,
             connectionInfo: 'h2',
-            finishDocumentLoadTime: Date.now() / 1000,
-            finishLoadTime: Date.now() / 1000,
+            finishDocumentLoadTime: now - Math.random() * 0.3,
+            finishLoadTime: now - Math.random() * 0.2,
             firstPaintAfterLoadTime: 0,
-            firstPaintTime: Date.now() / 1000,
+            firstPaintTime: now - Math.random() * 0.4,
             navigationType: 'Other',
             npnNegotiatedProtocol: 'h2',
-            requestTime: Date.now() / 1000,
-            startLoadTime: Date.now() / 1000,
+            requestTime: now - Math.random() * 1,
+            startLoadTime: now - Math.random() * 0.8,
             wasAlternateProtocolAvailable: false,
             wasFetchedViaSpdy: true,
             wasNpnNegotiated: true,
           };
         };
+        
+        // CSI
         window.chrome.csi = function() {
-          return { onloadT: Date.now(), pageT: Date.now() / 1000, startE: Date.now(), tran: 15 };
+          const now = Date.now();
+          return { 
+            onloadT: now, 
+            pageT: now / 1000, 
+            startE: now - Math.random() * 1000, 
+            tran: 15 
+          };
         };
-        window.chrome.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } };
+        
+        // App
+        window.chrome.app = { 
+          isInstalled: false,
+          getDetails: function(){ return null; },
+          getIsInstalled: function(){ return false; },
+          runningState: function(){ return 'cannot_run'; },
+          InstallState: { 
+            DISABLED: 'disabled', 
+            INSTALLED: 'installed', 
+            NOT_INSTALLED: 'not_installed' 
+          }, 
+          RunningState: { 
+            CANNOT_RUN: 'cannot_run', 
+            READY_TO_RUN: 'ready_to_run', 
+            RUNNING: 'running' 
+          } 
+        };
 
-        // Plugins realistas (como PluginArray)
+        // 4. Plugins - MUY IMPORTANTE para Cloudflare
         const makePluginArray = (arr) => {
           const pa = Object.create(PluginArray.prototype);
-          arr.forEach((p, i) => { pa[i] = p; });
-          Object.defineProperty(pa, 'length', { get: () => arr.length });
-          pa.item = (i) => arr[i];
-          pa.namedItem = (n) => arr.find(p => p.name === n);
-          pa.refresh = () => {};
+          arr.forEach((p, i) => { 
+            pa[i] = p;
+            Object.defineProperty(pa[i], 'length', { value: p.length, writable: false });
+          });
+          Object.defineProperty(pa, 'length', { 
+            get: () => arr.length,
+            enumerable: true,
+            configurable: false
+          });
+          pa.item = function(i) { return arr[i] || null; };
+          pa.namedItem = function(n) { return arr.find(p => p.name === n) || null; };
+          pa.refresh = function() {};
           return pa;
         };
+        
+        const plugins = [
+          { 
+            name: 'PDF Viewer', 
+            filename: 'internal-pdf-viewer', 
+            description: 'Portable Document Format', 
+            length: 1, 
+            0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: null } 
+          },
+          { 
+            name: 'Chrome PDF Viewer', 
+            filename: 'internal-pdf-viewer', 
+            description: 'Portable Document Format', 
+            length: 1, 
+            0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: null } 
+          },
+          { 
+            name: 'Chromium PDF Viewer', 
+            filename: 'internal-pdf-viewer', 
+            description: 'Portable Document Format', 
+            length: 1, 
+            0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: null } 
+          },
+          { 
+            name: 'Microsoft Edge PDF Viewer', 
+            filename: 'internal-pdf-viewer', 
+            description: 'Portable Document Format', 
+            length: 1, 
+            0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: null } 
+          },
+          { 
+            name: 'WebKit built-in PDF', 
+            filename: 'internal-pdf-viewer', 
+            description: 'Portable Document Format', 
+            length: 1, 
+            0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: null } 
+          }
+        ];
+        
         Object.defineProperty(navigator, 'plugins', {
-          get: () => makePluginArray([
-            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1, 0: { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' } },
-            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: 'Portable Document Format', length: 1, 0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' } },
-            { name: 'Native Client', filename: 'internal-nacl-plugin', description: 'Native Client', length: 2, 0: { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' }, 1: { type: 'application/x-pnacl', suffixes: '', description: 'Portable Native Client Executable' } },
-          ]),
+          get: () => makePluginArray(plugins),
+          enumerable: true,
+          configurable: true,
+        });
+        
+        // MimeTypes también
+        Object.defineProperty(navigator, 'mimeTypes', {
+          get: () => {
+            const mt = Object.create(MimeTypeArray.prototype);
+            mt[0] = { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: plugins[0] };
+            Object.defineProperty(mt, 'length', { get: () => 1 });
+            mt.item = (i) => mt[i] || null;
+            mt.namedItem = (n) => mt[0].type === n ? mt[0] : null;
+            return mt;
+          },
+          enumerable: true,
           configurable: true,
         });
 
-        // Languages
+        // 5. Languages
         Object.defineProperty(navigator, 'languages', {
           get: () => Object.freeze(['es-ES', 'es', 'en-US', 'en']),
+          enumerable: true,
+          configurable: true,
+        });
+        
+        Object.defineProperty(navigator, 'language', {
+          get: () => 'es-ES',
+          enumerable: true,
           configurable: true,
         });
 
-        // Permisos
-        const origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
-        window.navigator.permissions.query = (params) => (
-          params.name === 'notifications'
-            ? Promise.resolve({ state: Notification.permission })
-            : origQuery(params)
-        );
+        // 6. Permissions API
+        const originalPermissionsQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = function(params) {
+          if (params.name === 'notifications') {
+            return Promise.resolve({ 
+              state: Notification.permission,
+              onchange: null,
+              addEventListener: function(){},
+              removeEventListener: function(){}
+            });
+          }
+          return originalPermissionsQuery.call(window.navigator.permissions, params);
+        };
 
-        // Ocultar que se ejecuta en Electron
+        // 7. User Agent limpio
+        const originalUA = navigator.userAgent;
         Object.defineProperty(navigator, 'userAgent', {
-          get: () => navigator.userAgent.replace(/Electron\\/[\\d.]+ /, ''),
+          get: () => originalUA.replace(/Electron\\/[\\d.]+ /, '').replace(/\\s+/g, ' ').trim(),
+          enumerable: true,
+          configurable: true,
+        });
+        
+        Object.defineProperty(navigator, 'appVersion', {
+          get: () => navigator.userAgent.replace('Mozilla/', ''),
+          enumerable: true,
           configurable: true,
         });
 
-        // hardwareConcurrency y deviceMemory realistas
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
-        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+        // 8. Hardware realista con variación
+        Object.defineProperty(navigator, 'hardwareConcurrency', { 
+          get: () => 8,
+          enumerable: true,
+          configurable: true 
+        });
+        
+        Object.defineProperty(navigator, 'deviceMemory', { 
+          get: () => 8,
+          enumerable: true,
+          configurable: true 
+        });
 
-        // connection API
-        if (!navigator.connection) {
-          Object.defineProperty(navigator, 'connection', {
-            get: () => ({
-              effectiveType: '4g',
-              rtt: 50,
-              downlink: 10,
-              saveData: false,
+        // 9. Connection API
+        Object.defineProperty(navigator, 'connection', {
+          get: () => ({
+            effectiveType: '4g',
+            rtt: 50 + Math.floor(Math.random() * 50),
+            downlink: 10,
+            saveData: false,
+            onchange: null,
+            addEventListener: function(){},
+            removeEventListener: function(){},
+            dispatchEvent: function(){ return true; }
+          }),
+          enumerable: true,
+          configurable: true,
+        });
+
+        // 10. Battery API
+        if (!navigator.getBattery) {
+          navigator.getBattery = function() {
+            return Promise.resolve({
+              charging: true,
+              chargingTime: 0,
+              dischargingTime: Infinity,
+              level: 0.95 + Math.random() * 0.05,
+              onchargingchange: null,
+              onchargingtimechange: null,
+              ondischargingtimechange: null,
+              onlevelchange: null,
               addEventListener: function(){},
               removeEventListener: function(){},
-            }),
-            configurable: true,
+              dispatchEvent: function(){ return true; }
+            });
+          };
+        }
+
+        // 11. Screen properties realistas
+        Object.defineProperty(screen, 'availWidth', { get: () => screen.width });
+        Object.defineProperty(screen, 'availHeight', { get: () => screen.height - 40 });
+        Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+        Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+
+        // 12. Window properties
+        Object.defineProperty(window, 'outerWidth', { 
+          get: () => window.innerWidth,
+          configurable: true 
+        });
+        Object.defineProperty(window, 'outerHeight', { 
+          get: () => window.innerHeight + 85,
+          configurable: true 
+        });
+
+        // 13. Notification API
+        if (window.Notification) {
+          const OriginalNotification = window.Notification;
+          Object.defineProperty(window, 'Notification', {
+            get: () => OriginalNotification,
+            enumerable: true,
+            configurable: false
           });
         }
+
+        // 14. toString() de funciones nativas
+        const originalToString = Function.prototype.toString;
+        const originalCall = Function.prototype.call;
+        
+        Function.prototype.toString = function() {
+          if (this === navigator.permissions.query) {
+            return 'function query() { [native code] }';
+          }
+          if (this === window.chrome.runtime.sendMessage) {
+            return 'function sendMessage() { [native code] }';
+          }
+          if (this === navigator.getBattery) {
+            return 'function getBattery() { [native code] }';
+          }
+          return originalCall.call(originalToString, this);
+        };
+
+        // 15. Ocultar automation en prototype chain
+        delete Object.getPrototypeOf(navigator).webdriver;
+        
+        // 16. Performance timing realista
+        if (window.performance && window.performance.timing) {
+          const timing = window.performance.timing;
+          const now = Date.now();
+          const offset = now - 1000 - Math.random() * 500;
+          
+          Object.defineProperty(timing, 'navigationStart', { value: offset, writable: false });
+          Object.defineProperty(timing, 'fetchStart', { value: offset + 5, writable: false });
+          Object.defineProperty(timing, 'domainLookupStart', { value: offset + 10, writable: false });
+          Object.defineProperty(timing, 'domainLookupEnd', { value: offset + 15, writable: false });
+          Object.defineProperty(timing, 'connectStart', { value: offset + 15, writable: false });
+          Object.defineProperty(timing, 'connectEnd', { value: offset + 50, writable: false });
+          Object.defineProperty(timing, 'requestStart', { value: offset + 55, writable: false });
+          Object.defineProperty(timing, 'responseStart', { value: offset + 200, writable: false });
+          Object.defineProperty(timing, 'responseEnd', { value: offset + 400, writable: false });
+        }
+
+        // 17. Iframe detection bypass
+        Object.defineProperty(window, 'top', {
+          get: function() { return window; },
+          set: function() {},
+          configurable: false
+        });
+
+        // 18. Error stack traces limpios
+        const OriginalError = window.Error;
+        window.Error = function(...args) {
+          const err = new OriginalError(...args);
+          if (err.stack) {
+            err.stack = err.stack.replace(/\\s+at __puppeteer_evaluation_script__[\\s\\S]*/g, '');
+          }
+          return err;
+        };
+        window.Error.prototype = OriginalError.prototype;
+
+        // 19. Canvas fingerprint - agregar ruido mínimo
+        const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+        HTMLCanvasElement.prototype.toDataURL = function(type) {
+          const context = this.getContext('2d');
+          if (context) {
+            const imageData = context.getImageData(0, 0, this.width, this.height);
+            // Agregar ruido imperceptible (1 pixel)
+            if (imageData.data.length > 0) {
+              imageData.data[0] = imageData.data[0] ^ (Math.random() > 0.5 ? 1 : 0);
+            }
+            context.putImageData(imageData, 0, 0);
+          }
+          return originalToDataURL.apply(this, arguments);
+        };
+
+        // 20. WebGL fingerprint - agregar variación mínima
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+          if (parameter === 37445) { // UNMASKED_VENDOR_WEBGL
+            return 'Intel Inc.';
+          }
+          if (parameter === 37446) { // UNMASKED_RENDERER_WEBGL
+            return 'Intel Iris OpenGL Engine';
+          }
+          return getParameter.apply(this, arguments);
+        };
+
+        // 21. MouseEvent y PointerEvent realistas
+        const originalMouseEvent = window.MouseEvent;
+        window.MouseEvent = function(type, eventInitDict) {
+          const event = new originalMouseEvent(type, eventInitDict);
+          // Cloudflare verifica que los eventos tengan isTrusted
+          Object.defineProperty(event, 'isTrusted', { get: () => true });
+          return event;
+        };
+
+        // 22. Fecha y timezone consistentes
+        const originalDate = Date;
+        const timezoneOffset = new originalDate().getTimezoneOffset();
+        Date.prototype.getTimezoneOffset = function() {
+          return timezoneOffset;
+        };
+
+        console.log('[Anti-Detection] Cloudflare bypass initialized');
       `
     }).catch(() => {});
 
