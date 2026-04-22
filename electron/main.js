@@ -132,63 +132,17 @@ function createBrowserView(viewId, url) {
   const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
   view.webContents.setUserAgent(userAgent);
 
-  // Agregar headers contextuales para parecer un navegador real
+  // Solo agregar headers de identidad; Chromium ya genera Sec-Fetch-* correctos
   view.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
-    const url = details.url || '';
-    const resType = details.resourceType || '';
-
     details.requestHeaders['Accept-Language'] = 'es-ES,es;q=0.9,en;q=0.8';
-    details.requestHeaders['Accept-Encoding'] = 'gzip, deflate, br';
     details.requestHeaders['DNT'] = '1';
     details.requestHeaders['sec-ch-ua'] = `"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"`;
     details.requestHeaders['sec-ch-ua-mobile'] = '?0';
     details.requestHeaders['sec-ch-ua-platform'] = '"Windows"';
 
-    // Sec-Fetch-* headers deben coincidir con el tipo de request
-    const isNavigation = resType === 'mainFrame' || resType === 'subFrame';
-    const isXHR = resType === 'xhr' || resType === 'fetch';
-
-    if (isNavigation) {
-      details.requestHeaders['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
-      details.requestHeaders['Upgrade-Insecure-Requests'] = '1';
-      details.requestHeaders['Sec-Fetch-Mode'] = 'navigate';
-      details.requestHeaders['Sec-Fetch-Dest'] = resType === 'mainFrame' ? 'document' : 'iframe';
-      details.requestHeaders['Sec-Fetch-User'] = '?1';
-      // Sec-Fetch-Site depende del origen
-      try {
-        const pageOrigin = view.webContents.getURL();
-        if (!pageOrigin || pageOrigin === '' || pageOrigin === 'about:blank') {
-          details.requestHeaders['Sec-Fetch-Site'] = 'none';
-        } else {
-          const reqHost = new URL(url).hostname;
-          const pageHost = new URL(pageOrigin).hostname;
-          if (reqHost === pageHost) {
-            details.requestHeaders['Sec-Fetch-Site'] = 'same-origin';
-          } else if (reqHost.endsWith('.' + pageHost) || pageHost.endsWith('.' + reqHost)) {
-            details.requestHeaders['Sec-Fetch-Site'] = 'same-site';
-          } else {
-            details.requestHeaders['Sec-Fetch-Site'] = 'cross-site';
-          }
-        }
-      } catch (_) {
-        details.requestHeaders['Sec-Fetch-Site'] = 'none';
-      }
-    } else if (isXHR) {
-      details.requestHeaders['Sec-Fetch-Mode'] = 'cors';
-      details.requestHeaders['Sec-Fetch-Dest'] = 'empty';
-      details.requestHeaders['Sec-Fetch-Site'] = 'same-origin';
-    } else if (resType === 'script') {
-      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
-      details.requestHeaders['Sec-Fetch-Dest'] = 'script';
-    } else if (resType === 'stylesheet') {
-      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
-      details.requestHeaders['Sec-Fetch-Dest'] = 'style';
-    } else if (resType === 'image') {
-      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
-      details.requestHeaders['Sec-Fetch-Dest'] = 'image';
-    } else {
-      details.requestHeaders['Sec-Fetch-Mode'] = 'no-cors';
-      details.requestHeaders['Sec-Fetch-Dest'] = 'empty';
+    // Inyectar headers extra de MCP si existen
+    if (Object.keys(extraHeaders).length > 0) {
+      Object.assign(details.requestHeaders, extraHeaders);
     }
 
     callback({ requestHeaders: details.requestHeaders });
