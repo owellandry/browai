@@ -15,6 +15,7 @@ import './NavigationBar.css';
 function NavigationBar({ 
   currentUrl, 
   loading,
+  menuOpen,
   onNavigate, 
   onBack, 
   onForward, 
@@ -27,7 +28,6 @@ function NavigationBar({
   onMenuToggle
 }) {
   const [urlInput, setUrlInput] = useState(currentUrl);
-  const [menuOpen, setMenuOpen] = useState(false);
   const menuButtonRef = useRef(null);
 
   useEffect(() => {
@@ -41,7 +41,6 @@ function NavigationBar({
 
   const toggleMenu = () => {
     const newMenuState = !menuOpen;
-    setMenuOpen(newMenuState);
     
     if (onMenuToggle && menuButtonRef.current) {
       const rect = menuButtonRef.current.getBoundingClientRect();

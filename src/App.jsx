@@ -241,6 +241,7 @@ function App() {
       <NavigationBar
         currentUrl={activeTab?.url || ''}
         loading={activeTab?.loading || false}
+        menuOpen={menuOpen}
         onNavigate={navigateToUrl}
         onBack={handleBack}
         onForward={handleForward}

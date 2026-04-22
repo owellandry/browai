@@ -1,14 +1,17 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { IoTerminal, IoSettings } from 'react-icons/io5';
 import './MenuOverlay.css';
 
 function MenuOverlay({ isOpen, onClose, onOpenConsole, onOpenSettings, buttonRect }) {
+  const prevOpenRef = useRef(false);
+
   useEffect(() => {
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = isOpen;
+
     if (isOpen && window.electronAPI) {
-      // Ocultar el BrowserView cuando el menú está abierto
       window.electronAPI.hideBrowserView();
-    } else if (!isOpen && window.electronAPI) {
-      // Mostrar el BrowserView cuando el menú se cierra
+    } else if (!isOpen && wasOpen && window.electronAPI) {
       window.electronAPI.showBrowserView();
     }
   }, [isOpen]);
